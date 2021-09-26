@@ -91,43 +91,78 @@ func main() {
 			// Atualização do estado
 			state = states.WAIT
 
-			// Criação de uma goroutine para requisitar a sessão crítica
-			// sem bloquear o loop de leitura do canal
+			// Criamos uma goroutine para requisitar a sessão crítica
+			// sem bloquear o loop de leitura do canal. Passamos a esta rotina
+			// uma função que será executada (pela própria rotina) quando o
+			// processo conseguir acesso à região crítica
 			go cs.Request(pid, clock, func(send cs.Sender) {
-				// Quando o acesso à região crítica é finalmente concedido
-				// o processo deve imediatamente se colocar como "HELD"
-				state = states.HELD
+				// Quando o processo adquire o acesso, devemos primeiro
+				// atualizar o seu estado
+				// Para isso, faremos uma comunicação com a thread principal
+				// através do canal de sinconização
 
-				// E assim interagir com a região crítica
+				// No entanto, na thread da região crítica,
+				// devemos ter controle sobre a conclusão do processo
+				// por isso criamos um segundo canal auxiliar
+				done := make(chan bool)
+
+				// E então enviamos a mensagem com todas as ações síncronas
+				// que devem ser realizadas antes de utilizarmos, de fato, a CS
+				channel <- message.Message{
+					Source: message.CS,
+					Text:   "enter",
+					Reply: func() {
+						// Quando o acesso à região crítica é finalmente concedido
+						// o processo deve imediatamente se colocar como "HELD"
+						state = states.HELD
+
+						// Indicamos então que o processo acessou a CS
+						fmt.Println("Process entered CS")
+
+						// E informamos a thread da CS deste fato
+						done <- true
+					},
+				}
+
+				// Na thread da CS, aguardamos a conclusão do processo síncrono
+				<-done
+
+				// E então fechamos o canal auxiliar
+				close(done)
+
+				// Para assim, finalmente interagir com a região crítica de fato
 				msg := fmt.Sprintf("cs<%d,%d>(interaction with cs begins)", clock, pid)
 				send(msg)
 
-				// Tempo de espera para simular um atraso na utilização da CS
 				time.Sleep(time.Second * 5)
 
 				msg = fmt.Sprintf("cs<%d,%d>(interaction with cs ends)", clock, pid)
 				send(msg)
 
-				// Assim que a CS termina de ser utilizada, o estado deve
-				// ser atualizado para FREE
-				state = states.FREE
-
-				// E uma mensagem deve ser enviada ao canal de sincronização
-				// para evitar problemas de coerência na variável "replyQueue"
+				// Logo em seguida, enviamos uma nova mensagem à thread principal
+				// para realizar ações síncronas de conclusão do uso da CS
 				channel <- message.Message{
 					Source: message.CS,
-					Text:   "end",
+					Text:   "leave",
 					Reply: func() {
+						// Assim que a CS termina de ser utilizada, o estado deve
+						// ser atualizado para FREE
+						state = states.FREE
+
+						fmt.Println("Process exited CS")
+
+						// Então verificamos se há algum reply pendente
+						// caso não haja, podemos encerrar aqui
 						if len(replyQueue) == 0 {
 							return
 						}
 
-						// E os replies agendados devem ser executados
+						// Caso haja algum, devemos executá-los
 						for _, Reply := range replyQueue {
 							Reply()
 						}
 
-						// E, finalmente, a fila de replies deve ser limpa
+						// E, finalmente, limpar a fila de replies
 						replyQueue = make([]func(), 0)
 					},
 				}
