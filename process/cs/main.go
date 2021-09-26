@@ -11,6 +11,9 @@ import (
 var csConnection *net.UDPConn = nil
 var connections []*net.UDPConn
 
+// Número total de processos executando o algoritmo
+var nProcesses uint
+
 // Função de contato com a região crítica
 type Sender func(string)
 
@@ -24,7 +27,7 @@ func Request(pid int, clock int, onHeld func(send Sender)) {
 	fillConnections(pid)
 
 	// Criamos um canal para sincronizar as respostas dos outros processos
-	channel := make(chan bool, 2)
+	channel := make(chan bool, nProcesses - 1)
 
 	// E os requisitamos um a um
 	for _, conn := range connections {
@@ -48,7 +51,7 @@ func Request(pid int, clock int, onHeld func(send Sender)) {
 	}
 
 	// Esperamos então até que todos os processos tenham concedido acesso à CS
-	for i := 0; i < 2; i += 1 {
+	for i := 0; i < nProcesses - 1; i += 1 {
 		<-channel
 	}
 
@@ -81,6 +84,7 @@ func fillConnections(pid int) {
 	if csConnection == nil {
 		localAddr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:0")
 		ports := os.Args[2:]
+		nProcesses = len(ports)
 		for i, port := range ports {
 			if i+1 == pid {
 				continue

@@ -16,8 +16,8 @@ func main() {
 	// Verificação inicial de uso correto da linha de comando
 	nArgs := len(os.Args)
 
-	if nArgs != 5 {
-		fmt.Println("Usage:", os.Args[0], "[id] [port1] [port2] [port3]")
+	if nArgs < 3 {
+		fmt.Println("Usage:", os.Args[0], "[id] [...ports]")
 		os.Exit(1)
 	}
 
@@ -26,11 +26,16 @@ func main() {
 
 	pid, err := strconv.Atoi(idStr)
 
-	if err != nil || pid < 1 || pid > 3 {
+	// Obtenção do número de processos
+	nProcesses := nArgs - 2
+
+	// Validação do id do processo
+	if err != nil || pid < 1 || pid > nProcesses {
 		fmt.Println("ID inválido:", idStr)
 		os.Exit(1)
 	}
 
+	// Porta de escuta do processo atual
 	port := os.Args[pid+1]
 
 	// Esse canal é criado para centralizar a chegada de mensagens de todas as
