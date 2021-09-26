@@ -4,7 +4,7 @@ package message
 type Message struct {
 	Source MessageSource
 	Text   string
-	Reply  func()
+	Reply  func(int, int)
 }
 
 // Enumeração das possíveis fontes de mensagens que chegam ao processo

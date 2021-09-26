@@ -54,7 +54,7 @@ func main() {
 	lastRequestClock := -1
 
 	// Inicialização da fila de replies
-	var replyQueue []func()
+	var replyQueue []func(int, int)
 
 	// Loop de eventos de leitura do canal, feita de forma síncrona
 	for msg := range channel {
@@ -95,7 +95,7 @@ func main() {
 			// sem bloquear o loop de leitura do canal. Passamos a esta rotina
 			// uma função que será executada (pela própria rotina) quando o
 			// processo conseguir acesso à região crítica
-			go cs.Request(pid, clock, func(send cs.Sender) {
+			go cs.Request(pid, clock, channel, func(send cs.Sender) {
 				// Quando o processo adquire o acesso, devemos primeiro
 				// atualizar o seu estado
 				// Para isso, faremos uma comunicação com a thread principal
@@ -111,7 +111,7 @@ func main() {
 				channel <- message.Message{
 					Source: message.CS,
 					Text:   "enter",
-					Reply: func() {
+					Reply: func(int, int) {
 						// Quando o acesso à região crítica é finalmente concedido
 						// o processo deve imediatamente se colocar como "HELD"
 						state = states.HELD
@@ -144,7 +144,7 @@ func main() {
 				channel <- message.Message{
 					Source: message.CS,
 					Text:   "leave",
-					Reply: func() {
+					Reply: func(clock int, pid int) {
 						// Assim que a CS termina de ser utilizada, o estado deve
 						// ser atualizado para FREE
 						state = states.FREE
@@ -159,47 +159,62 @@ func main() {
 
 						// Caso haja algum, devemos executá-los
 						for _, Reply := range replyQueue {
-							Reply()
+							Reply(clock, pid)
 						}
 
 						// E, finalmente, limpar a fila de replies
-						replyQueue = make([]func(), 0)
+						replyQueue = make([]func(int, int), 0)
 					},
 				}
 			})
-		} else if msg.Source == message.UDP { // Caso 2: Requisição UDP
-			// Primeiro gravamos os dados da requisição
-			var reqClock int
-			var reqPid int
+		} else if msg.Source == message.UDP { // Caso 2: Tráfego UDP
+			// Primeiro gravamos os dados do remetente
+			var senderClock int
+			var senderPid int
 
-			fmt.Sscanf(msg.Text, "req<%d,%d>", &reqClock, &reqPid)
+			// E verificamos o tipo de tráfego (requisição ou resposta)
+			isRequest := msg.Text[0:3] == "req"
 
-			// Primeiro devemos atualizar o clock do processo
+			isReply := msg.Text[0:5] == "reply"
 
-			// Caso o clock da requisição seja superior, devemos trocar o clock
+			// Para, apropriadamente, capturar os parâmetros da mensagem
+			if isRequest {
+				fmt.Sscanf(msg.Text, "req<%d,%d>", &senderClock, &senderPid)
+			} else if isReply {
+				fmt.Sscanf(msg.Text, "reply<%d,%d>", &senderClock, &senderPid)
+			}
+
+			// Caso o clock do remetente seja superior, devemos trocar o clock
 			// original por este
-			if reqClock > clock {
-				clock = reqClock
+			if senderClock > clock {
+				clock = senderClock
 			}
 
 			// E, independentemente do resultado, incrementar o clock do processo
 			clock += 1
 
+			// Caso a mensagem recebida não seja de uma requisição, continuamos
+			// a leitura do canal para processar a próxima mensagem
+			if !isRequest {
+				continue
+			}
+
 			// Verificamos se o processo que mandou a requisição tem prioridade
 			// sobre a CS
-			reqHasPriority := reqClock < lastRequestClock || (reqClock == lastRequestClock && reqPid < pid)
+			reqHasPriority := senderClock < lastRequestClock || (senderClock == lastRequestClock && senderPid < pid)
 
 			// E, caso tenha, ou caso o processo corrente esteja livre,
 			// este processo recebe um reply imediato
 			if state == states.FREE ||
 				(state == states.WAIT && reqHasPriority) {
-				msg.Reply()
+				msg.Reply(clock, pid)
 			} else {
 				// Caso contrário, o reply é agendado na fila
 				replyQueue = append(replyQueue, msg.Reply)
 			}
 		} else if msg.Source == message.CS { // Caso 3: Mensagem da seção crítica
-			msg.Reply()
+			// Nesse caso, é necessário apenas invocar o método da mensagem
+			msg.Reply(clock, pid)
 		} else { // Caso 4: Nunca vai acontecer, mas vai que...
 			fmt.Println("Invalid message source")
 			os.Exit(1)

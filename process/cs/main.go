@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"process/message"
 	"strconv"
 )
 
@@ -21,13 +22,13 @@ type Sender func(string)
 // Para tal, é necessário que sejam fornecidos o id do procesos, o seu relógio
 // lógico e uma função de callback que será executada quando o acesso for
 // garantido
-func Request(pid int, clock int, onHeld func(send Sender)) {
+func Request(pid int, clock int, channel chan message.Message, onHeld func(send Sender)) {
 	// Primeiro, devemos inicializar as conexões com os demais processos
 	// e com a região crítica
 	fillConnections(pid)
 
 	// Criamos um canal para sincronizar as respostas dos outros processos
-	channel := make(chan bool, nProcesses-1)
+	auxChannel := make(chan bool, nProcesses-1)
 
 	// E os requisitamos um a um
 	for _, conn := range connections {
@@ -42,21 +43,28 @@ func Request(pid int, clock int, onHeld func(send Sender)) {
 			// Aguardamos uma resposta
 			buf := make([]byte, 100)
 
-			conn.Read(buf)
+			n, _ := conn.Read(buf)
+
+			// E a encaminhamos para o canal de sincronização
+			channel <- message.Message{
+				Source: message.UDP,
+				Text:   string(buf[0:n]),
+				Reply:  nil,
+			}
 
 			// E por fim, atualizamos o canal para indicar que um dos processos
 			// permitiu o acesso à região crítica
-			channel <- true
+			auxChannel <- true
 		}(conn)
 	}
 
 	// Esperamos então até que todos os processos tenham concedido acesso à CS
 	for i := 0; i < nProcesses-1; i += 1 {
-		<-channel
+		<-auxChannel
 	}
 
 	// E fechamos o canal
-	close(channel)
+	close(auxChannel)
 
 	// Como o acesso à região crítica é feito através de um callback,
 	// usamos essa flag para garantir que não haverão problemas

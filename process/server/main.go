@@ -39,8 +39,9 @@ func Listen(port string, channel chan<- message.Message) {
 		Text := string(buf[0:n])
 
 		// Criação da função de resposta à requisição
-		Reply := func() {
-			go conn.WriteTo([]byte("reply<"+Text+">"), addr)
+		Reply := func(clock int, pid int) {
+			msg := fmt.Sprintf("reply<%d,%d>", clock, pid)
+			go conn.WriteTo([]byte(msg), addr)
 		}
 
 		// Retransmissão da mensagem pelo canal
